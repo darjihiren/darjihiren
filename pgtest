@@ -1,0 +1,1886 @@
+https://opensourcedbms.com/dbms/point-in-time-recovery-pitr-using-pg_basebackup-with-postgresql-9-2/
+
+https://postgresql.r2schools.com/how-to-upgrade-from-postgresql-10-to-11/
+
+https://www.highgo.ca/2020/10/01/postgresql-wal-archiving-and-point-in-time-recovery/
+
+
+https://linuxconfig.org/how-to-create-a-hot-standby-with-postgresql
+
+https://www.2ndquadrant.com/en/blog/basics-of-tuning-checkpoints/
+
+https://pgdash.io/blog/postgres-physical-replication.html
+
+https://dbsguru.com/pitr-pg_basebackup-in-postgresql/   -- PITR using pg_basebackup
+
+https://learn.postgreshelp.com/postgresql-interview-questions/
+==========================================================================================================
+Table size:
+
+select pg_relation_size(relid)/1024/1024 as tablesize,schemaname, n_live_tup from pg_stat_user_tables where relname='<table name>';
+
+
+How to check session details:
+
+select pid as process_id, 
+       usename as username, 
+       datname as database_name, 
+       client_addr as client_address, 
+       application_name,
+       backend_start,
+       state,
+       state_change
+from pg_stat_activity;
+
+Columns
+process_id - process ID of this backend
+username - name of the user logged into this backend
+database_name - name of the database this backend is connected to
+client_address - IP address of the client connected to this backend
+application_name - name of the application that is connected to this backend
+backend_start - time when this process was started. For client backends, this is the time the client connected to the server.
+state - current overall state of this backend. Possible values are:
+active
+idle
+idle in transaction
+idle in transaction (aborted)
+fastpath function call
+disabled
+state_change - time when the state was last changed
+
+=========================================================================================
+How to check control file data:
+
+
+pg_controldata -D $PGDATA
+
+https://www.postgresql.fastware.com/blog/how-to-solve-the-problem-if-pg_xlog-is-full
+
+
+Restore and Recovery:
+
+For PostgreSQL V9.1 and later, if the parameter wal_level is set to hot_standby and the parameter hot_standby is set to ON in the postgresql.conf file, 
+the restore operation is paused after reaching the specified time.
+
+==========================================================================================
+
+PostgreSQL Commands:
+
+$ psql -d dbname -U username
+
+$ psql -h host -d dbname -U username -W  -- connection to different host
+
+postgres# \c dbname username --Switch connection to new database on same host
+
+List available databases:
+
+postgres# \l  -- list available database
+
+postgres# \g -- to execute previous command
+
+postgres# SELECT version(); -- check postgres version
+
+postgres# \du -- check user and roles
+
+postgres# \s -- display commands history
+
+postgres# \dt -- list all tables or \d table_name -- describe table
+
+
+
+SELECT pg_size_pretty( pg_database_size('dbname') );   --- check db size
+
+SELECT pg_size_pretty( pg_total_relation_size('tablename') );  -- check table size
+
+===========================================================================================
+
+Postgres mandatory process:
+
+postgres@host ~> $ ps -ef|grep -i postgres
+postgres  4086     1  0 Aug23 ?        00:00:07 /usr/pgsql-9.4/bin/postgres -D <postgres data directory>
+root      4869  4789  0 11:12 pts/0    00:00:00 sudo su - postgres
+root      4883  4869  0 11:12 pts/0    00:00:00 su - postgres
+postgres  4884  4883  0 11:12 pts/0    00:00:00 -bash
+postgres  4921  4086  0 Aug23 ?        00:00:00 postgres: logger process
+postgres  4976  4884  0 11:12 pts/0    00:00:00 ps -ef
+postgres  4977  4884  0 11:12 pts/0    00:00:00 grep --color=auto -i postgres
+postgres  4982  4086  0 Aug23 ?        00:00:21 postgres: checkpointer process
+postgres  4983  4086  0 Aug23 ?        00:00:03 postgres: writer process
+postgres  4985  4086  0 Aug23 ?        00:00:07 postgres: wal writer process
+postgres  4986  4086  0 Aug23 ?        00:00:12 postgres: autovacuum launcher process
+postgres  4989  4086  0 Aug23 ?        00:00:01 postgres: archiver process
+postgres  4990  4086  0 Aug23 ?        00:00:26 postgres: stats collector process
+
+===============================================================================================================
+
+Shutdown postgres server and perform restore from commvault:
+
+
+[TEST/SIT][postgres@ ~]$ pg_ctl -D <postgres data directory> stop
+
+2) <postgres data directory> - Take backup of archive and data directory (mv or cp) and delete directories..
+
+
+++ after restore is done, we need to change listen_address=local ip, as it will have prod ip and then restart
+
+
+pg_ctl -D <postgres data directory> start
+
+
+
+Issue:
+
+psql: FATAL:  no pg_hba.conf entry for host "<>", user "bitbuser", database "bitb", SSL off
+
+
+added below entry and perform $ pg_ctl reload , post which it worked fine.
+
+
+$ pg_ctl reload ----> like restart listener
+$ pg_ctl status  ----> check server status
+
+TYPE  DATABASE        		USER            		ADDRESS                 METHOD
+
+
+host    bitb    		bitbuser    	<app ip>/32 			trust
+host    bitbprod     	bitbuser    	<app ip>/32 				trust
+
+
+
+==========================================================================================
+
+
+Postgres monitoring db healthcheck:
+
+
+[PRODUCTION][postgres@hostname ~]$ cat /var/lib/pgsql/dba/pg_scripts/pg_mon_db_email.sh
+#!/bin/bash
+#########################################################################################################################################
+# pg_mon_db_email.sh: Send email of database report from hostname postgres prod database server
+#
+
+#
+#########################################################################################################################################
+
+
+# Set environment variables
+export PATH=$PATH:/usr/pgsql-9.6/bin
+
+# Define variables
+DBA_EMAIL=""
+
+# Run the monitoring script
+sh /var/lib/pgsql/dba/pg_scripts/pg_mon_db.sh >/var/lib/pgsql/dba/pg_logs/pg_mon_db_"$(date +"%Y%m%d")".log
+
+# Send email
+mailx -s "conf and jir Database Monitoring Report on $(date +"%d/%m/%Y")" "$DBA_EMAIL" </var/lib/pgsql/dba/pg_logs/pg_mon_db_"$(date +"%Y%m%d")".log
+
+[PRODUCTION][postgres@hostname ~]$ cat /var/lib/pgsql/dba/pg_scripts/pg_mon_db.sh
+echo " "
+echo " "
+export PGDATA=<postgres data directory>
+export PATH=$PATH:/usr/pgsql-9.6/bin
+
+PSQL="/usr/pgsql-9.6/bin/psql"
+PORT=5432
+HOST="localhost"
+DB="jirdb"
+USER="postgres"
+count=1000
+time=5
+
+echo "------***CHECKING DISK SPACE***------"
+echo " "
+        df -h
+
+echo " "
+echo " "
+
+echo "------***CHECKING RAM USAGE***------"
+echo " "
+       free -h
+
+echo " "
+echo " "
+
+echo "------***DATABASE SIZE***------"
+echo " "
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+select datname, pg_size_pretty(pg_database_size(datname)) from pg_database order by pg_database_size(datname) desc;
+EOF
+
+echo "------***DATABASE CONNECTIONS **------"
+echo " "
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+select datname, usename, client_addr, count(*) from pg_stat_activity group by 1,2,3 order by 4 desc;
+EOF
+
+echo "------***CACHE HIT RATIO***------"
+echo " "
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+select round(sum(blks_hit)*100/sum(blks_hit+blks_read)::numeric, 2) as hit_ratio from pg_stat_database;
+EOF
+
+echo "------***COMMIT RATIO***------"
+echo " "
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+SELECT datname, 100 * xact_commit / (xact_commit + xact_rollback) as commit_ratio FROM pg_stat_database WHERE (xact_commit + xact_rollback) > 0;
+EOF
+
+
+echo "------***TOP 10 CPU INTENSE QUERIES***------"
+echo " "
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+\c postgres
+SELECT queryid, substring(query, 1,100) AS short_query, round(total_time::numeric, 2) AS total_time, calls, rows, round(total_time::numeric / calls, 2) AS avg_time, round((100 * total_time / sum(total_time::numeric) OVER ())::numeric, 2) AS percentage_cpu FROM pg_stat_statements ORDER BY total_time DESC LIMIT 10;
+EOF
+
+echo "------***TOP 10 TIME CONSUMING QUERIES***------"
+echo " "
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+\c postgres
+SELECT queryid,substring(query, 1, 100) AS short_query, round(total_time::numeric, 2) AS total_time, calls, rows, round(total_time::numeric / calls, 2) AS avg_time, round((100 * total_time / sum(total_time::numeric) OVER ())::numeric, 2) AS percentage_cpu FROM pg_stat_statements ORDER BY avg_time DESC LIMIT 10;
+EOF
+
+echo "------***TABLES BLOATED***------"
+
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+\c postgres
+
+WITH constants AS (
+    -- define some constants for sizes of things
+    -- for reference down the query and easy maintenance
+    SELECT current_setting('block_size')::numeric AS bs, 23 AS hdr, 8 AS ma
+),
+no_stats AS (
+    -- screen out table who have attributes
+    -- which dont have stats, such as JSON
+    SELECT table_schema, table_name,
+        n_live_tup::numeric as est_rows,
+        pg_table_size(relid)::numeric as table_size
+    FROM information_schema.columns
+        JOIN pg_stat_user_tables as psut
+           ON table_schema = psut.schemaname
+           AND table_name = psut.relname
+        LEFT OUTER JOIN pg_stats
+        ON table_schema = pg_stats.schemaname
+            AND table_name = pg_stats.tablename
+            AND column_name = attname
+    WHERE attname IS NULL
+        AND table_schema NOT IN ('pg_catalog', 'information_schema')
+    GROUP BY table_schema, table_name, relid, n_live_tup
+),
+null_headers AS (
+    -- calculate null header sizes
+    -- omitting tables which dont have complete stats
+    -- and attributes which aren't visible
+    SELECT
+        hdr+1+(sum(case when null_frac <> 0 THEN 1 else 0 END)/8) as nullhdr,
+        SUM((1-null_frac)*avg_width) as datawidth,
+        MAX(null_frac) as maxfracsum,
+        schemaname,
+        tablename,
+        hdr, ma, bs
+    FROM pg_stats CROSS JOIN constants
+        LEFT OUTER JOIN no_stats
+            ON schemaname = no_stats.table_schema
+            AND tablename = no_stats.table_name
+    WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+        AND no_stats.table_name IS NULL
+        AND EXISTS ( SELECT 1
+            FROM information_schema.columns
+                WHERE schemaname = columns.table_schema
+                    AND tablename = columns.table_name )
+    GROUP BY schemaname, tablename, hdr, ma, bs
+),
+data_headers AS (
+    -- estimate header and row size
+    SELECT
+        ma, bs, hdr, schemaname, tablename,
+        (datawidth+(hdr+ma-(case when hdr%ma=0 THEN ma ELSE hdr%ma END)))::numeric AS datahdr,
+        (maxfracsum*(nullhdr+ma-(case when nullhdr%ma=0 THEN ma ELSE nullhdr%ma END))) AS nullhdr2
+    FROM null_headers
+),
+table_estimates AS (
+    -- make estimates of how large the table should be
+    -- based on row and page size
+    SELECT schemaname, tablename, bs,
+        reltuples::numeric as est_rows, relpages * bs as table_bytes,
+    CEIL((reltuples*
+            (datahdr + nullhdr2 + 4 + ma -
+                (CASE WHEN datahdr%ma=0
+                    THEN ma ELSE datahdr%ma END)
+                )/(bs-20))) * bs AS expected_bytes,
+        reltoastrelid
+    FROM data_headers
+        JOIN pg_class ON tablename = relname
+        JOIN pg_namespace ON relnamespace = pg_namespace.oid
+            AND schemaname = nspname
+    WHERE pg_class.relkind = 'r'
+),
+estimates_with_toast AS (
+    -- add in estimated TOAST table sizes
+    -- estimate based on 4 toast tuples per page because we dont have
+    -- anything better.  also append the no_data tables
+    SELECT schemaname, tablename,
+        TRUE as can_estimate,
+        est_rows,
+        table_bytes + ( coalesce(toast.relpages, 0) * bs ) as table_bytes,
+        expected_bytes + ( ceil( coalesce(toast.reltuples, 0) / 4 ) * bs ) as expected_bytes
+    FROM table_estimates LEFT OUTER JOIN pg_class as toast
+        ON table_estimates.reltoastrelid = toast.oid
+            AND toast.relkind = 't'
+),
+table_estimates_plus AS (
+-- add some extra metadata to the table data
+-- and calculations to be reused
+-- including whether we cant estimate it
+-- or whether we think it might be compressed
+    SELECT current_database() as databasename,
+            schemaname, tablename, can_estimate,
+            est_rows,
+            CASE WHEN table_bytes > 0
+                THEN table_bytes::NUMERIC
+                ELSE NULL::NUMERIC END
+                AS table_bytes,
+            CASE WHEN expected_bytes > 0
+                THEN expected_bytes::NUMERIC
+                ELSE NULL::NUMERIC END
+                    AS expected_bytes,
+            CASE WHEN expected_bytes > 0 AND table_bytes > 0
+                AND expected_bytes <= table_bytes
+                THEN (table_bytes - expected_bytes)::NUMERIC
+                ELSE 0::NUMERIC END AS bloat_bytes
+    FROM estimates_with_toast
+    UNION ALL
+    SELECT current_database() as databasename,
+        table_schema, table_name, FALSE,
+        est_rows, table_size,
+        NULL::NUMERIC, NULL::NUMERIC
+    FROM no_stats
+),
+bloat_data AS (
+    -- do final math calculations and formatting
+    select current_database() as databasename,
+        schemaname, tablename, can_estimate,
+        table_bytes, round(table_bytes/(1024^2)::NUMERIC,3) as table_mb,
+        expected_bytes, round(expected_bytes/(1024^2)::NUMERIC,3) as expected_mb,
+        round(bloat_bytes*100/table_bytes) as pct_bloat,
+        round(bloat_bytes/(1024::NUMERIC^2),2) as mb_bloat,
+        table_bytes, expected_bytes, est_rows
+    FROM table_estimates_plus
+)
+-- filter output for bloated tables
+SELECT databasename, schemaname, tablename,
+    can_estimate,
+    est_rows,
+    pct_bloat, mb_bloat,
+    table_mb
+FROM bloat_data
+-- this where clause defines which tables actually appear
+-- in the bloat chart
+-- example below filters for tables which are either 50%
+-- bloated and more than 20mb in size, or more than 25%
+-- bloated and more than 1GB in size
+WHERE ( pct_bloat >= 50 AND mb_bloat >= 20 )
+    OR ( pct_bloat >= 25 AND mb_bloat >= 1000 )
+ORDER BY pct_bloat DESC;
+EOF
+
+
+echo " "
+echo "------***conf DATABASE DETAILS***------"
+echo " "
+
+echo "------***HIT RATIO***------"
+echo " "
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+select round(sum(blks_hit)*100/sum(blks_hit+blks_read)::numeric, 2) as hit_ratio_confdb from pg_stat_database where datname='confdb';
+EOF
+
+
+echo "------***WHAT ARE THE QUERIES RUNING MORE THAN $time MINUTES***------"
+echo " "
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+\pset format wrapped
+SELECT pid, now() - query_start as "runtime", usename, datname, state, query
+  FROM  pg_stat_activity
+  WHERE now() - query_start > '$time minutes'::interval and datname='confdb'
+ ORDER BY runtime DESC;
+
+EOF
+
+echo "------**NUMBER OF DEADLOCKS***------"
+echo " "
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+select deadlocks FROM pg_stat_database WHERE datname = 'confdb';
+EOF
+
+echo "------***TABLES HAVING MORE THAN $count DEAD TUPLES***------"
+
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+\c confdb
+select schemaname, relname, n_dead_tup  from pg_stat_all_tables where n_dead_tup > $count order by 3 desc;
+EOF
+
+echo " "
+
+echo "------**VACCUM AND ANALYZE DETAILS OF DATABASE****------"
+echo " "
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+\c confdb
+select schemaname, relname, n_dead_tup, n_live_tup, last_vacuum, to_char(last_autovacuum,'DD-MM-YYYY HH12:MI:SS AM') AS last_autovacuum, vacuum_count, autovacuum_count from pg_stat_user_tables order by 3 desc limit 20;
+select schemaname, relname, to_char(last_analyze, 'DD-MM-YYYY HH12:MI:SS AM') as last_analyze, to_char(last_autoanalyze, 'DD-MM-YYYY HH12:MI:SS AM') as last_autoanalyze, analyze_count, autoanalyze_count from pg_stat_user_tables order by 4 desc limit 20;
+EOF
+
+echo " "
+
+echo "------**HIT RATIO OF TABLES < 90 ****------"
+echo " "
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+\c confdb
+
+SELECT schemaname AS "Schema", relname AS "relation",heap_blks_read AS heap_read,heap_blks_hit AS heap_hit, ( (heap_blks_hit*100) / NULLIF((heap_blks_hit + heap_blks_read), 0)) AS ratio FROM pg_statio_user_tables where ( (heap_blks_hit*100) / NULLIF((heap_blks_hit + heap_blks_read), 0)) < 90 and heap_blks_read >10 order by 5;
+EOF
+
+echo " "
+
+echo "------**INDEX USAGE***------"
+
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+\c confdb
+
+
+SELECT
+  schemaname || '.' || relname AS table,
+  indexrelname AS index,
+  pg_size_pretty(pg_relation_size(i.indexrelid)) AS index_size,
+  idx_scan as index_scans
+FROM pg_stat_user_indexes ui
+JOIN pg_index i ON ui.indexrelid = i.indexrelid
+WHERE NOT indisunique AND idx_scan < 50 AND pg_relation_size(relid) > 5 * 8192 AND idx_scan > 0
+ORDER BY idx_scan DESC;
+
+EOF
+echo " "
+
+echo "------***jir DATABASE DETAILS***------"
+echo " "
+
+echo "------***HIT RATIO***------"
+echo " "
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+select round(sum(blks_hit)*100/sum(blks_hit+blks_read)::numeric, 2) as hit_ratio_jirdb from pg_stat_database where datname='jirdb';
+EOF
+
+
+echo "------***WHAT ARE THE QUERIES RUNING MORE THAN $time MINUTES***------"
+echo " "
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+\pset format wrapped
+SELECT pid, now() - query_start as "runtime", usename, datname, state, query
+  FROM  pg_stat_activity
+  WHERE now() - query_start > '$time minutes'::interval and datname='jirdb'
+ ORDER BY runtime DESC;
+
+EOF
+
+echo "------**NUMBER OF DEADLOCKS***------"
+echo " "
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+select deadlocks FROM pg_stat_database WHERE datname = 'confdb';
+EOF
+
+
+echo "------***TABLES HAVING MORE THAN $count DEAD TUPLES***------"
+
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+\c jirdb
+select schemaname, relname, n_dead_tup  from pg_stat_all_tables where n_dead_tup > $count order by 3 desc;
+EOF
+
+echo " "
+
+echo "------**VACCUM AND ANALYZE DETAILS OF DATABASE****------"
+echo " "
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+\c jirdb
+select schemaname, relname, n_dead_tup, n_live_tup, last_vacuum, to_char(last_autovacuum,'DD-MM-YYYY HH12:MI:SS AM') AS last_autovacuum, vacuum_count, autovacuum_count from pg_stat_user_tables order by 3 desc limit 20;
+select schemaname, relname, to_char(last_analyze, 'DD-MM-YYYY HH12:MI:SS AM') as last_analyze, to_char(last_autoanalyze, 'DD-MM-YYYY HH12:MI:SS AM') as last_autoanalyze, analyze_count, autoanalyze_count from pg_stat_user_tables order by 4 desc limit 20;
+EOF
+
+echo " "
+echo "------**HIT RATIO OF TABLES < 90 ****------"
+echo " "
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+\c jirdb
+
+SELECT schemaname AS "Schema", relname AS "relation",heap_blks_read AS heap_read,heap_blks_hit AS heap_hit, ( (heap_blks_hit*100) / NULLIF((heap_blks_hit + heap_blks_read), 0)) AS ratio FROM pg_statio_user_tables where ( (heap_blks_hit*100) / NULLIF((heap_blks_hit + heap_blks_read), 0)) < 90 and heap_blks_read >10 order by 5;
+EOF
+
+echo " "
+
+echo "------**INDEX USAGE***------"
+
+
+$PSQL -d $DB -U $USER -p $PORT <<EOF
+\c jirdb
+
+
+SELECT
+  schemaname || '.' || relname AS table,
+  indexrelname AS index,
+  pg_size_pretty(pg_relation_size(i.indexrelid)) AS index_size,
+  idx_scan as index_scans
+FROM pg_stat_user_indexes ui
+JOIN pg_index i ON ui.indexrelid = i.indexrelid
+WHERE NOT indisunique AND idx_scan < 50 AND pg_relation_size(relid) > 5 * 8192 AND idx_scan > 0
+ORDER BY idx_scan DESC;
+
+EOF
+echo " "
+
+
+=============================================================================================================
+Backup database:
+
+
+nohup pg_dump jirdb > /backup/hostname/jirdb/jirdb_20191017.sql 2>/backup/hostname/jirdb/jirdb_20191017.err &
+
+pg_dump -U postgres -F t jirdb > /backup/jirdb.tar
+
+
+
+================================================
+
+How to kill session:
+
+select * from pg_stat_activity;
+
+select pg_terminate_backend(pid) 
+from pg_stat_activity
+where pid = '18765';
+
+==========================================================
+
+Configuring the PostgreSQL Archive Log Directory
+
+Archive log files are stored in the Archive Log directory. Ensure to follow the below checkpoints before running the PostgreSQL FS backup.
+
+Procedure
+
+Specify the Archive log directory path in the postgresql.conf file prior to performing the PostgreSQL FS backup. 
+Make sure that this path does not point to pg_log or log directories and pg_xlog or pg_waldirectories.
+
+archive_command = 'cp %p /opt/wal/%f' #UNIX
+archive_command = 'copy "%p" "D:\\PostgreSQL\\wal\\%f"' #Windows
+
+For PostgreSQL 8.3 version and later, use the following command to turn on the archive_mode. This feature is not supported for PostgreSQL 8.2 and earlier versions.
+archive_mode = on
+
+For PostgreSQL 9.x.x version, use the following configuration.
+Set wal_level = archive instead of default wal_level = minimal
+
+From PostgreSQL 10.x.x version onwards, use the following configuration.
+Set wal_level = replica
+
+Verify that the archive command provided in the postgresql.conf file is correct. 
+You can test this by running the following commands and verifying that they successfully complete.
+
+Select pg_start_backup(‘Testing’);
+Select pg_stop_backup();
+
+or
+
+select pg_switch_xlog();
+
+============================================================================
+
+http://bajis-postgres.blogspot.com/2013/10/postgresql-architecture.html?_sm_au_=iVVDKDnN3qfJZ6JjTWGQHKsVj7tBW
+
+
+=============================================================
+
+cat /var/lib/pgsql/dba/pg_scripts/pg_mon_replica_primary.sh
+#!/bin/bash
+#########################################################################################################################################
+# pg_mon_replica_primary.sh: Monitor database replication on primary server.
+
+#
+#########################################################################################################################################
+
+# Set environment variables
+export PGDATA=<postgres data directory>
+export PATH=$PATH:/usr/pgsql-9.4/bin
+
+# Define variables
+# GAP_WARNING_THRESHOLD: set warning threshold of replication gap to 1048576 bytes (1MB)
+REPLICA_STATUS_LOG=/var/lib/pgsql/dba/pg_logs/replica_status.log
+REPLICA_STATUS=Normal
+declare -i GAP_WARNING_THRESHOLD=1048576
+DBA_EMAIL=<email id>
+
+# Check replication status
+psql -t -c "select client_addr, state, sync_state, pg_xlog_location_diff(sent_location, replay_location) from pg_stat_replication;" | sed -e '$d' > "$REPLICA_STATUS_LOG"
+
+# Analyze the status log file
+while IFS=' | ' read -r client_addr state sync_state gap
+do
+  if [ "$state" != 'streaming' ] || [ "$sync_state" != 'async' ] || [ "$gap" -gt "$GAP_WARNING_THRESHOLD" ]
+  then
+    REPLICA_STATUS=Warning
+  fi
+done < "$REPLICA_STATUS_LOG"
+
+# Act according to analysis result
+if [ "$REPLICA_STATUS" = 'Warning' ]
+then
+  mailx -s "Please check PostgreSQL replication status on primary server $(hostname)" "$DBA_EMAIL" < "$REPLICA_STATUS_LOG"
+fi
+postgres@ ~> $
+
+
+Replication setup on primary:
+
+$ cat postgresql.replication.conf.20180629
+# Enable replication connections; set this figure to at least one more
+# than the number of standbys which will connect to this server
+# (note that repmgr will execute `pg_basebackup` in WAL streaming mode,
+# which requires two free WAL senders)
+
+max_wal_senders = 10
+
+# Ensure WAL files contain enough information to enable read-only queries
+# on the standby
+
+wal_level = 'hot_standby'
+
+# Enable read-only queries on a standby
+# (Note: this will be ignored on a master but we recommend including
+# it anyway)
+
+hot_standby = on
+
+# Enable WAL file archiving
+archive_mode = on
+
+# Set archive command to a script or application that will safely store
+# you WALs in a secure place. /bin/true is an example of a command that
+# ignores archiving. Use something more sensible.
+#archive_command = '/bin/true'
+archive_command = 'test ! -f /pgsql/archive/%f && cp %p /pgsql/archive/%f && scp %p <hostname>:/pgsql/archive/%f'
+# archive_command = 'test ! -f /pgsql/archive/%f && cp %p /pgsql/archive/%f'
+
+# If cloning using rsync, or you have configured `pg_basebackup_options`
+# in `repmgr.conf` to include the setting `--xlog-method=fetch` (from
+# PostgreSQL 10 `--wal-method=fetch`), *and* you have not set
+# `restore_command` in `repmgr.conf`to fetch WAL files from another
+# source such as Barman, you'll need to set `wal_keep_segments` to a
+# high enough value to ensure that all WAL files generated while
+# the standby is being cloned are retained until the standby starts up.
+
+# wal_keep_segments = 5000
+
+
+========================================================================
+
+How to create database and user: login to superuser postgres and perform below;
+
+CREATE USER youruser  'yourpass';
+
+CREATE DATABASE artifactory1  OWNER artifactory  ENCODING 'UTF8';
+
+GRANT CONNECT ON DATABASE artifactory1 to artifactory;
+
+OR
+
+sudo -u postgres psql
+postgres=# create database mydb;
+postgres=# create user myuser with encrypted pd 'mypass';
+postgres=# grant all privileges on database mydb to myuser;
+
+====================================================================
+
+PostgreSQL copy database within the same server:
+
+Sometimes, you want to copy a PostgreSQL database within a database server for testing purposes.
+
+PostgreSQL makes it easy to do it via the CREATE DATABASE statement as follows:
+
+CREATE DATABASE targetdb 
+WITH TEMPLATE sourcedb;
+This statement copies the sourcedb to the targetdb. For example, to copy the dvdrental sample database to the dvdrental_test database, you use the following statement:
+
+CREATE DATABASE dvdrental_test 
+WITH TEMPLATE dvdrental;
+Depending on the size of the source database, it may take a while to complete copying.
+
+If the dvdrental database has active connections, you will get the following error:
+
+ERROR:  source database "dvdrental" is being accessed by other users
+DETAIL:  There is 1 other session using the database.
+The following query returns the active connections:
+
+SELECT pid, usename, client_addr 
+FROM pg_stat_activity 
+WHERE datname ='dvdrental';
+To terminate the active connections to the dvdrental database, you use the following query:
+
+SELECT pg_terminate_backend (pid)
+FROM pg_stat_activity
+WHERE datname = 'dvdrental';
+After that you can execute the CREATE TABLE WITH TEMPLATE statement again to copy the dvdrental database to dvdrental_test database.
+
+PostgreSQL copy database from a server to another:
+
+
+There are several ways to copy a database between PostgreSQL database servers.
+
+If the size of the source database is big and the connection between the database servers is slow, you can dump the source database to a file, copy the file to the remote server, and restore it:
+
+First, dump the source database to a file.
+
+pg_dump -U postgres -d sourcedb -f sourcedb.sql
+Second, copy the dump file to the remote server.
+
+Third, create a new database in the remote server:
+
+CREATE DATABASE targetdb;
+Finally, restore the dump file on the remote server:
+
+psql -U postgres -d targetdb -f sourcedb.sql
+Copying the dvdrental database example
+The following steps illustrate how to copy the dvdrental database from the local server to the remote server.
+
+First, dump the dvdrental database into a dump file e.g., dvdrental.sql:
+
+pg_dump -U postgres -O dvdrental -f dvdrental.sql
+Second, copy the dump file to the remote server.
+
+Third, create the dvdrental database on the remote server:
+
+CREATE DATABASE dvdrental;
+Fourth, restore the dvdrental.sql dump file in the remote server:
+
+psql -U postgres -d dvdrental -f dvdrental.sql
+In case the connection between servers are fast and the size of the database is not big, you can use the following command:
+
+pg_dump -C -h local -U localuser sourcedb | psql -h remote -U remoteuser targetdb
+For example, to copy the dvdrental database from the localhost server to the remote server, you do it as follows:
+
+pg_dump -C -h localhost -U postgres dvdrental | psql -h remote -U postgres dvdrental
+
+
+=======================================================================
+
+How to check tablespace:
+
+SELECT spcname FROM pg_tablespace;  or \db
+
+
+How to list schema:
+
+psql -> \dn
+
+\dt *.*    ---> all schemas with tables
+
+\dt       ----> list tables for public schemas
+
+app_db_dev=> \x    -- format output
+Expanded display is on.
+
+==========================================================================
+Read only user:
+
+CREATE ROLE readonly LOGIN pd 'some_pass';
+-- Existing objects
+GRANT CONNECT ON DATABASE the_db TO readonly;
+GRANT USAGE ON SCHEMA public TO readonly;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO readonly;
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO readonly;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO readonly;
+-- New objects
+ALTER DEFAULT PRIVILEGES FOR ddl_user IN SCHEMA public GRANT SELECT ON TABLES TO
+readonly;
+ALTER DEFAULT PRIVILEGES FOR ddl_user IN SCHEMA public GRANT SELECT ON SEQUENCES
+TO readonly;
+ALTER DEFAULT PRIVILEGES FOR ddl_user IN SCHEMA public GRANT EXECUTE ON FUNCTIONS
+TO readonly;
+
+=======================================================================
+PostgreSQL Build Document - PostgreSQL 9.6.13
+
+1. Overview
+
+The build document aims to provide detailed steps to build a PostgreSQL 9.6.13 database server that meets standards.
+DBAs in projects and BAU operations should follow SOE document and build document for any new PostgreSQL server build.
+The build document is based on:
+- Red Hat Enterprise Linux 7.5 (x86-64)
+- PostgreSQL 9.6.13 (x86-64)
+- VM with 4 vCPUs, 32GB memory and additional 128GB virtual disk
+(Some parameter settings should be reviewed and modified if VM configurations are different.)
+
+2. Configure Operating System
+
+2.1. Access Server
+The Linux server can be accessed with  admin account. sudo is configured so that DBA can switch to either root or postgres user.
+(run as a- account $)
+sudo su –
+sudo su - postgres
+2.2. Check Hostname
+Check hostname.
+(run as root #)
+hostname
+server.domain
+Check if /etc/hosts file is in correct format.
+(run as root #)
+cat /etc/hosts
+IP server.domain server
+2.3. Create Tuned Profile
+The RHEL 7.5 OS image comes with default profile ‘virtual-guest’. Settings in this profile are not optimized for database performance.
+A new tuned profile '-pgsql' should be created with the following settings and activated.
+(run as root #)
+mkdir /etc/tuned/-pgsql
+vi /etc/tuned/-pgsql/tuned.conf
+[main]
+summary= tuned profile for PostgreSQL servers
+[cpu]
+governor=performance
+energy_perf_bias=performance
+min_perf_pct=100
+[disk]
+readahead=>4096
+[sysctl]
+vm.overcommit_memory=2
+vm.swappiness=0
+vm.dirty_ratio=2
+vm.dirty_background_ratio=1
+[vm]
+transparent_hugepages=never
+chmod +x /etc/tuned/-pgsql/tuned.conf
+tuned-adm profile -pgsql
+2.4. Tune Kernel Parameters
+Set the following two kernel parameters related to shared memory segments if maximum half of 32GB memory will be used for shared buffers. Enable the change.
+(run as root #)
+vi /etc/sysctl.conf
+# shared memory
+kernel.shmmax = 17179869184
+kernel.shmall = 4194304
+/sbin/sysctl -p
+2.5. Provision File System
+Check device name for the 128GB virtual disk. In most cases, the device name is /dev/sdb.
+(run as root #)
+fdisk -lu
+Create partition on the disk.
+(run as root #)
+fdisk /dev/sdb
+In fdisk tool, enter the following command options.
+(Reference: https://www.thegeekdiary.com/linux-unix-how-to-create-primary-partition-using-fdisk/)
+n
+p
+1
+[Enter]
+[Enter]
+w
+Create ext4 file system on the new partition.
+(run as root #)
+mkfs.ext4 /dev/sdb1
+Get UUID.
+(run as root #)
+blkid /dev/sdb1
+/dev/sdb1: UUID="63e2e800-3a77-43c4-a7e2-8e2896e8e44a" TYPE="ext4"
+Add entry in /etc/fstab for automount.
+(run as root #)
+vi /etc/fstab
+UUID=63e2e800-3a77-43c4-a7e2-8e2896e8e44a /pgsql ext4 defaults 0 2
+Create mount point and mount the file system.
+(run as root #)
+mkdir /pgsql
+mount /pgsql
+mkdir <postgres data directory>
+df -Ph
+
+
+3. Install PostgreSQL Software
+
+Files in the .zip:
+postgresql96-9.6.13-1PGDG.rhel7.x86_64
+postgresql96-contrib-9.6.13-1PGDG.rhel7.x86_64
+postgresql96-libs-9.6.13-1PGDG.rhel7.x86_64
+postgresql96-server-9.6.13-1PGDG.rhel7.x86_64
+Transfer the files to a directory on the server (e.g. /tmp/RPM) and set correct read permissions. Install the packages with rpm.
+(run as root #)
+cd /tmp/RPM
+ls -ls
+rpm -ivh *.rpm
+OS group ‘postgres’ and user ‘postgres’ are created with package installation. Set correct ownership and permission for /pgsql mount point.
+(run as root #)
+chown -R postgres:postgres /pgsql
+chmod -R 700 /pgsql
+
+
+
+4. Configure PostgreSQL Instance
+
+4.1. Initialize Database Cluster
+Set PGDATA and PATH environment variables to new values and initialize database cluster.
+(run as postgres $)
+vi .bash_profile
+…
+export PGDATA=<postgres data directory>
+…
+export PATH=/usr/pgsql-9.6/bin:$PATH
+…
+export PGDATA=<postgres data directory>
+export PATH=/usr/pgsql-9.6/bin:$PATH
+initdb -D <postgres data directory>
+
+4.2. Configure Instance Parameters
+
+Modify the following parameters (except ‘huge_pages’) in <postgres data directory>/postgresql.conf according to SOE. A sample postgresql.conf file is also available as reference.
+Parameter
+Value
+Comments
+
+shared_buffers
+8GB
+25% - 40% of physical memory (server memory 32GB as example)
+
+huge_pages
+on
+Enable use of huge memory pages.
+
+temp_buffers
+128MB
+Maximum number of temporary buffers used by each database session.
+
+effective_io_concurrency
+128
+Increase from default as SSD can process more concurrent requests.
+
+max_worker_processes
+16
+Maximum number of background processes.
+
+fsync
+on
+Make sure that updates are physically written to disks.
+
+synchronous_commit
+on
+Transaction commit will wait for WAL records to be written to disk before the command returns a "success" indication to the client.
+
+wal_sync_method
+fsync
+Force WAL updates out to disk.
+
+full_page_writes
+on
+Write entire content of each disk page to WAL during the first modification of that page after a checkpoint.
+
+work_mem
+128MB
+Memory to be used by internal sort operations and hash tables before writing to temporary disk files.
+
+maintenance_work_mem
+2GB
+Maximum amount of memory to be used by maintenance operations.
+
+autovacuum_max_workers
+10
+Maximum number of autovacuum processes that may be running at any one time.
+
+autovacuum_work_mem
+256MB
+Maximum amount of memory to be used by each autovacuum worker process.
+
+effective_cache_size
+5GB
+Estimate of the cost of using an index.
+
+shared_preload_libraries
+→
+Track execution statistics of all SQL statements executed by a server:
+'pg_stat_statements'
+
+
+client_min_messages
+log
+Message level.
+
+lock_timeout
+600000
+Number of milliseconds while attempting to acquire a lock on a table, index, row, or other database object. 10 min.
+
+idle_in_transaction_session_timeout
+600000
+Terminate any session with an open transaction that has been idle for longer than the specified duration in milliseconds. 10min.
+
+log_min_messages
+info
+Message level.
+
+log_min_error_statement
+info
+Message level.
+
+log_line_prefix
+→
+Include client IP/port, username, database information in log:
+'< %m %r %d %u >'
+
+listen_addresses
+<IP>
+IP address of database server
+
+port
+5432
+Default listen port.
+
+max_connections
+1000
+Maximum number of concurrent connections to the database server.
+
+wal_level
+replica
+Only for production.
+
+archive_mode
+on
+Only for production.
+
+archive_command
+→
+Only for production:
+'test ! -f /pgsql/archive/%f && cp %p /pgsql/archive/%f'
+
+
+Restart PostgreSQL instance to verify the changes.
+(run as postgres $)
+pg_ctl restart -m fast
+
+4.3. Enable Hugepages
+
+Hugepage settings need calculation based on PostgreSQL instance settings.
+(run as root #)
+Get PostgreSQL master PID.
+head -1 $PGDATA/postmaster.pid
+7196
+Get memory consumption value.
+grep ^VmPeak /proc/7196/status
+VmPeak: 8869024 kB
+Check hugepagesize setting.
+grep ^Hugepagesize /proc/meminfo
+Hugepagesize: 2048 kB
+Calculate total pages required.
+echo "8869024/2048" | bc
+4330
+Configure nr_hugepages parameter. Add 10 to the calculation result.
+vi /etc/sysctl.conf
+vm.nr_hugepages=4340
+Enable the change.
+/sbin/sysctl -p
+
+
+Turn on hugepages in PostgreSQL and restart instance.
+(run as postgres $)
+
+vi <postgres data directory>/postgresql.conf
+huge_pages = on
+
+pg_ctl restart -m fast
+
+4.4. Configure Autostart
+
+Configure PostgreSQL autostart with server reboot.
+Copy configuration file and update ‘PGDATA’ setting. Enable autostart.
+(run as root #)
+cp /usr/lib/systemd/system/postgresql-9.6.service /etc/systemd/system/postgresql-9.6.service
+vi /etc/systemd/system/postgresql-9.6.service
+Environment=PGDATA=<postgres data directory>/
+systemctl enable postgresql-9.6.service
+4.5. Reboot Server
+Reboot the server.
+(run as root #)
+shutdown -r now
+Verify configurations after server reboot.
+Active Profile is ‘-pgsql’.
+(run as root #)
+tuned-adm active
+Current active profile: -pgsql
+Transparent hugepages are disabled.
+(run as root #)
+cat /sys/kernel/mm/transparent_hugepage/enabled
+always madvise [never]
+Hugepages are enabled and used.
+(run as root #)
+grep -i huge /proc/meminfo
+AnonHugePages: 18432 kB
+HugePages_Total: 4340
+HugePages_Free: 128
+HugePages_Rsvd: 13
+HugePages_Surp: 0
+Hugepagesize: 2048 kB
+PostgreSQL instance is started automatically.
+(run as root #)
+systemctl status postgresql-9.6.service
+Check if there is any error in PostgreSQL log (<postgres data directory>/pg_log/*).
+(run as postgres $)
+
+
+5. Create User Databases
+
+5.1. Create Database for jir
+
+
+
+Follow vendor’s instructions to create jir database. It is suggested to use strong pd for security (20 characters with combination of uppercase, lowercase, numbers and symbols).
+(run as postgres $ and in psql utility)
+create user jiruser with pd '<pd>';
+CREATE DATABASE jirdb WITH OWNER jiruser ENCODING 'UNICODE' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0;
+Enable application server access.
+(run as postgres $)
+vi <postgres data directory>/pg_hba.conf
+host jirdb jiruser <AppServerIPAddress>/32 md5
+pg_ctl reload
+
+5.2. Create Database for conf
+
+
+
+Follow vendor’s instructions to create conf database. It is suggested to use strong pd for security (20 characters with combination of uppercase, lowercase, numbers and symbols).
+(run as postgres $ and in psql utility)
+
+create user confuser with pd '<pd>';
+
+CREATE DATABASE confdb WITH OWNER confuser ENCODING 'UTF8' LC_COLLATE 'en_AU.UTF-8' LC_CTYPE 'en_AU.UTF-8' TEMPLATE template0;
+
+Enable application server access.
+(run as postgres $)
+
+vi <postgres data directory>/pg_hba.conf
+host confdb confuser <AppServerIPAddress>/32 md5
+
+pg_ctl reload
+==============================================
+
+
+Issue: Postgres is running on non default port:
+
+[TEST/SIT][postgres11]$ psql
+psql: could not connect to server: No such file or directory
+        Is the server running locally and accepting
+        connections on Unix domain socket "/var/run/postgresql/.s.PGSQL.5432"?
+
+
+postgresql]$ export PGPORT=5433
+postgresql]$ psql
+psql (11.10)
+Type "help" for help.
+
+postgres=# exit
+
+
+================================
+
+how to drop user in postgres:
+
+
+\c <dbname>
+drop owned by <username>;
+drop user <username>;
+
+==================================================
+
+How to check user privileges:
+
+table permissions:
+
+select  * from information_schema.role_table_grants where grantee='readonly';
+
+ownership:
+
+select 
+   * 
+from pg_tables 
+where tableowner = 'NewPasIntegration'
+;
+
+schema permissions:
+
+select  
+  r.usename as grantor, e.usename as grantee, nspname, privilege_type, is_grantable
+from pg_namespace
+join lateral (
+  SELECT
+    *
+  from
+    aclexplode(nspacl) as x
+) a on true
+join pg_user e on a.grantee = e.usesysid
+join pg_user r on a.grantor = r.usesysid 
+ where e.usename = 'readonlyuser'
+;
+
+list all privileges of a role (grantee):
+
+SELECT grantor, grantee, table_schema, table_name, privilege_type
+FROM information_schema.table_privileges
+WHERE grantee = 'readonly';
+
+=======================================================================
+
+https://discuss.tutorialdba.com/410/permission-particular-database
+
+
+We first of all allow the user to connect to the database
+
+GRANT CONNECT ON DATABASE <dbName> TO <readonly_user>;
+As I’m fairly new to permissions in PostgreSQL I granted database usage for the read only user, even though I believe this step is not necessary.
+
+GRANT USAGE ON DATABASE <dbName> TO <readonly_user>;
+A database can have multiple schemas. A public schema is created and that’s where tables are created by default. 
+
+So here we are granting usage to that specific schema.
+
+GRANT USAGE ON SCHEMA public TO <readonly_user>;
+As we want our <readonly_user> to have only read permissions we grant them to do SELECT queries on our database…
+
+grant usage on schema payments to readonly;
+grant select on all tables in schema payments to readonly;
+	
+	
+GRANT SELECT ON DATABASE <dbName> TO <readonly_user>;
+…and all of it’s tables…
+
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO <readonly_user>;
+…and their related sequences.
+
+GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO <readonly_user>;
+
+
+#!/bin/bash
+
+for table in `echo "SELECT schemaname || '.' || relname FROM pg_stat_user_tables;" | psql -A -t my_database_name`;
+do
+    echo "GRANT SELECT ON TABLE $table to my_new_user;"
+    echo "GRANT SELECT ON TABLE $table to my_new_user;" | psql my_database_name
+done
+=================================================================================
+
+How to describe table:
+
+\d+ schema_name.table_name 
+
+OR
+
+\d schema_name.table_name
+
+=======================================
+
+How to check docker container ip:
+
+docker ps  ---> will give container name
+docker inspect <container name> |grep -i "IPAddress"
+
+==========================================================
+Postgres switchover:
+
+https://pankajconnect.medium.com/setting-up-and-switching-postgresql-active-standby-environment-on-linux-6af1ce660846
+
+
+
+===================================================================
+Move Postgres data from docker to local host:
+
+Steps: Install Postgres 11
+
+yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+yum install -y postgresql11-server
+
+
+Create the clusters:
+
+mkdir -p /data/postgres11
+chown postgres:posgres /data/postgres11
+chmod 700 /data/postgres11
+
+export PGDATA=/data/postgres11
+export PATH=/usr/pgsql-11/bin:$PATH
+export PGPORT=5433
+
+$ initdb -D /data/postgres11
+
+Start the instance:
+
+$ pg_ctl -D /data/postgres11 -o "-p 5433" start
+
+
+Postgres Service Start Procedures
+
+sudo systemctl enable postgresql-11
+sudo systemctl start postgresql-11
+
+
+
+[TEST/SIT][postgres@hostname postgres11]$ netstat -tulpn | grep 5433
+(Not all processes could be identified, non-owned process info
+ will not be shown, you would have to be root to see it all.)
+tcp        0      0 127.0.0.1:5433          0.0.0.0:*               LISTEN      29813/postgres
+[TEST/SIT][postgres@hostname postgres11]$
+
+
+[TEST/SIT][postgres@hostname bin]$ export PATH=/usr/pgsql-11/bin:$PATH
+[TEST/SIT][postgres@hostname bin]$ echo $PATH
+/usr/pgsql-11/bin:/usr/pgsql-11/bin:/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/opt/puppetlabs/bin
+[TEST/SIT][postgres@hostname bin]$ export PGDATA=/data/postgres11
+[TEST/SIT][postgres@hostname bin]$ echo $PGDATA
+/data/postgres11
+[TEST/SIT][postgres@hostname bin]$ pg_ctl -D /data/postgres11 start
+waiting for server to start....2020-11-25 09:57:52.245 AEDT [14826] LOG:  listening on IPv4 address "<host ip>", port 5433
+2020-11-25 09:57:52.256 AEDT [14826] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5433"
+2020-11-25 09:57:52.277 AEDT [14826] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5433"
+2020-11-25 09:57:52.358 AEDT [14826] LOG:  redirecting log output to logging collector process
+2020-11-25 09:57:52.358 AEDT [14826] HINT:  Future log output will appear in directory "log".
+ done
+server started
+[TEST/SIT][postgres@hostname bin]$ ps -ef|grep pgsql
+postgres 14826     1  1 09:57 pts/2    00:00:00 /usr/pgsql-11/bin/postgres -D /data/postgres11
+postgres 14837 14739  0 09:58 pts/2    00:00:00 grep --color=auto pgsql
+[TEST/SIT][postgres@hostname bin]$ psql -U postgres -p 5433
+psql (11.10)
+Type "help" for help.
+
+postgres=# \l
+                                  List of databases
+   Name    |  Owner   | Encoding |   Collate   |    Ctype    |   Access privileges
+-----------+----------+----------+-------------+-------------+-----------------------
+ postgres  | postgres | UTF8     | en_AU.UTF-8 | en_AU.UTF-8 |
+ template0 | postgres | UTF8     | en_AU.UTF-8 | en_AU.UTF-8 | =c/postgres          +
+           |          |          |             |             | postgres=CTc/postgres
+ template1 | postgres | UTF8     | en_AU.UTF-8 | en_AU.UTF-8 | =c/postgres          +
+           |          |          |             |             | postgres=CTc/postgres
+(3 rows)
+
+postgres=#
+
+
+++ copy app_db_qat source database:
+
+pg_dump app_db_dev > /var/lib/postgresql/data/app_db_dev.bkp26112020
+
+Copy dumpfile as below;
+
+cp /data/postgres/carm-dev/app_db_dev.bkp26112020 /data/postgres11/app_db_dev.bkp26112020
+
+Third, create a new database in the remote server:
+
+create user appintegration with pd '<>';
+create database app_db_dev owner appintegration;
+grant connect on database app_db_dev to appintegration;
+
+Finally, restore the dump file on the remote server:
+
+psql app_db_dev < /data/postgres11/app_db_dev.bkp26112020
+
+
+++Create user and database before restore:
+
+
+[TEST/SIT][postgres@hostname ~]$ psql -U postgres -p 5433
+psql (11.10)
+Type "help" for help.
+
+postgres=# create database app_db_dev owner appintegration;
+CREATE DATABASE
+postgres=# \l
+                                      List of databases
+    Name     |      Owner      | Encoding |   Collate   |    Ctype    |   Access privileges
+-------------+-----------------+----------+-------------+-------------+-----------------------
+ postgres    | postgres        | UTF8     | en_AU.UTF-8 | en_AU.UTF-8 |
+ app_db_dev | appintegration | UTF8     | en_AU.UTF-8 | en_AU.UTF-8 |
+ template0   | postgres        | UTF8     | en_AU.UTF-8 | en_AU.UTF-8 | =c/postgres          +
+             |                 |          |             |             | postgres=CTc/postgres
+ template1   | postgres        | UTF8     | en_AU.UTF-8 | en_AU.UTF-8 | =c/postgres          +
+             |                 |          |             |             | postgres=CTc/postgres
+(4 rows)
+
+postgres=# grant connect on database app_db_dev to appintegration;
+GRANT
+postgres=# \l
+                                             List of databases
+    Name     |      Owner      | Encoding |   Collate   |    Ctype    |          Access privileges
+-------------+-----------------+----------+-------------+-------------+-------------------------------------
+ postgres    | postgres        | UTF8     | en_AU.UTF-8 | en_AU.UTF-8 |
+ app_db_dev | appintegration | UTF8     | en_AU.UTF-8 | en_AU.UTF-8 | =Tc/appintegration                +
+             |                 |          |             |             | appintegration=CTc/appintegration
+ template0   | postgres        | UTF8     | en_AU.UTF-8 | en_AU.UTF-8 | =c/postgres                        +
+             |                 |          |             |             | postgres=CTc/postgres
+ template1   | postgres        | UTF8     | en_AU.UTF-8 | en_AU.UTF-8 | =c/postgres                        +
+             |                 |          |             |             | postgres=CTc/postgres
+(4 rows)
+
+
+restore database:
+
+postgres=# exit
+[TEST/SIT][postgres@hostname ~]$ echo $PGDATA
+/data/postgres11
+[TEST/SIT][postgres@hostname ~]$ psql -p 5433 app_db_dev < /data/postgres11/app_db_dev.bkp21072020
+
+
+[TEST/SIT][postgres@hostname ~]$ psql -p 5433 -U postgres -d app_db_dev
+psql (11.10)
+Type "help" for help.
+
+app_db_dev=# \l
+                                             List of databases
+    Name     |      Owner      | Encoding |   Collate   |    Ctype    |          Access privileges
+-------------+-----------------+----------+-------------+-------------+-------------------------------------
+ postgres    | postgres        | UTF8     | en_AU.UTF-8 | en_AU.UTF-8 |
+ app_db_dev | appintegration | UTF8     | en_AU.UTF-8 | en_AU.UTF-8 | =Tc/appintegration                +
+             |                 |          |             |             | appintegration=CTc/appintegration
+ template0   | postgres        | UTF8     | en_AU.UTF-8 | en_AU.UTF-8 | =c/postgres                        +
+             |                 |          |             |             | postgres=CTc/postgres
+ template1   | postgres        | UTF8     | en_AU.UTF-8 | en_AU.UTF-8 | =c/postgres                        +
+             |                 |          |             |             | postgres=CTc/postgres
+(4 rows)
+
+app_db_dev=# exit
+[TEST/SIT][postgres@hostname ~]$ psql -p 5433 -U appintegration -d app_db_dev
+psql (11.10)
+Type "help" for help.
+
+app_db_dev=> \conninfo
+You are connected to database "app_db_dev" as user "appintegration" via socket in "/var/run/postgresql" at port "5433".
+
+=========================================================================
+
+Postgres DB upgrade from 9 to 10
+
+Migrating data on Linux computers
+On Linux computers, prepare the database schema using the pre-upgrade check utility and perform the migration using the following procedure: 
+
+Navigate to the following location on the computer where you have upgraded the Application Server: 
+<InstallationDirectory>/tools/postgres10_upgrade
+
+Copy the contents of this folder to a temporary directory on the TrueSight Capacity Optimization Database Server that runs the PostgreSQL 9.x database.
+Extract the contents of the pg10upgrade_tool.tar file, and provide read, write, and execute permissions of these files to a postgres user.
+Edit the customenv.sh file and set all the necessary variables.
+
+As a postgres user, run the prepare_for_pg_upgrade.sh command to prepare the database for upgrade. 
+
+The pre_upgrade_script.sql script is created, and you will be prompted whether to run this SQL script.
+If you select Yes, the script will run and prepare the database for upgrade.
+If you select No, you can use pgsql or a DB client connected to the PostgreSQL 9.x instance to run the script.
+
+As a root user, stop the PostgreSQL 9.x instance. 
+For example:  systemctl stop postgresql-9.6
+
+As a root user, install and configure the PostgreSQL 10.x database. For more information, see  Installing PostgreSQL 10.x  .
+
+As a root user, initiate the PostgreSQL 10.x database using the initdb command:
+For example: /usr/pgsql-10/bin/postgresql-10-setup initdb
+
+If the database instance is already running, as a root user, stop PostgreSQL 10.x instance by using the following command: 
+For example: systemctl stop postgresql-10
+
+As the postgres user, perform the upgrade using the pg_upgrade command:   
+For example: /usr/pgsql-10/bin/pg_upgrade -b /usr/pgsql-9.6/bin -B /usr/pgsql-10/bin -d /var/lib/pgsql/9.6/data -D /var/lib/pgsql/10/data -k –v
+
+For more information about the pg_upgrade command, see  pg_upgrade  .
+Copy the Client Authentication configuration file (pg_hba.conf) from the <PostgreSQL 9.x installation directory>/data folder to the <PostgreSQL 10.x installation directory>/data folder.
+
+Copy the following configuration parameter information from the <PostgreSQL 9.x installation directory>/data/postgresql.conf file and add it to the <PostgreSQL 10.x installation directory>/data/postgresql.conf file.
+For example:
+
+listen_addresses = '*'
+max_connections = 300
+default_statistics_target = 50
+constraint_exclusion = on
+wal_buffers = 8MB
+checkpoint_segments = 32
+checkpoint_timeout = 15min
+checkpoint_completion_target = 0.9
+log_min_messages = fatal
+log_min_error_statement = fatal
+#following parameters should be tuned according to actual memory available to Database server machine
+#example of configuration for 8GB RAM 
+
+maintenance_work_mem = 512MB
+
+effective_cache_size = 5GB
+work_mem = 48MB
+shared_buffers = 2GB
+
+As a root user, start the PostgreSQL 10.x instance. 
+For example: systemctl start postgresql-10  
+
+=============================================================================
+
+https://www.percona.com/blog/2019/03/27/postgresql-upgrade-using-pg_dump-pg_restore/
+
+How to take dump of roles/object DDL?
+
+/usr/pgsql-11/bin/pg_dump -s -d app_db_dev > /data/postgres11/schema_only.sql   --schema definition
+
+/usr/pgsql-11/bin/pg_dumpall -g -p 5433 > /data/postgres11/globals.sql  --roles 
+
+restore it now on destination:
+
+psql -d database <destination_connection> < /data/postgres11/schema_only.sql
+
+====================================================================================
+
+Alternate option to stop DB in postgres:
+
+It's not to possible particular DB on postgresql ,you need to shutdown entire cluster .
+so here requirement is like that you just don't want to connect to db just restrict  at DB level using revoking  privilege
+
+Example for :
+
+REVOKE CONNECT ON DATABASE d FROM public;
+
+======================================================================
+
+Switch WAL :
+
+ /pgsql/archive> $ cat /var/lib/pgsql/dba/pg_scripts/switch_xlog.sh
+#!/bin/bash
+#########################################################################################################################################
+# switch_xlog.sh: Force xlog switch.
+#
+#########################################################################################################################################
+
+# Set environment variables
+export PGDATA=<postgres data directory>
+export PATH=$PATH:/usr/pgsql-9.4/bin
+
+# Switch xlog
+psql -c "select pg_switch_xlog();"
+
+
+=========================================================================================
+pg_archivecleanup  -- how to cleanup archives
+
+https://www.percona.com/blog/2019/07/10/wal-retention-and-clean-up-pg_archivecleanup/
+
+==================================================================
+
+https://www.tutorialdba.com/2018/06/whats-is-difference-between-streaming.html
+https://www.digitalocean.com/community/tutorials/how-to-set-up-physical-streaming-replication-with-postgresql-12-on-ubuntu-20-04
+https://www.tecmint.com/configure-postgresql-streaming-replication-in-centos-8/
+
+
+======================================================================
+Performance issue:
+
+https://severalnines.com/database-blog/postgresql-running-slow-tips-tricks-get-source
+
+
+Cache hit ratio:
+
+
+SELECT 
+  sum(heap_blks_read) as heap_read,
+  sum(heap_blks_hit)  as heap_hit,
+  sum(heap_blks_hit) / (sum(heap_blks_hit) + sum(heap_blks_read)) as ratio
+FROM 
+  pg_statio_user_tables;
+  
+Index cache hit ratio:
+
+SELECT 
+  sum(idx_blks_read) as idx_read,
+  sum(idx_blks_hit)  as idx_hit,
+  (sum(idx_blks_hit) - sum(idx_blks_read)) / sum(idx_blks_hit) as ratio
+FROM 
+  pg_statio_user_indexes;
+  
+  
+Index Usage:
+
+SELECT 
+  relname, 
+  100 * idx_scan / (seq_scan + idx_scan) percent_of_times_index_used, 
+  n_live_tup rows_in_table
+FROM 
+  pg_stat_user_tables
+WHERE 
+    seq_scan + idx_scan > 0 
+ORDER BY 
+  n_live_tup DESC;
+  
+  
+===============================================
+  
+  Find all objects for user:
+  
+  select 
+    nsp.nspname as SchemaName
+    ,cls.relname as ObjectName 
+    ,rol.rolname as ObjectOwner
+    ,case cls.relkind
+        when 'r' then 'TABLE'
+        when 'm' then 'MATERIALIZED_VIEW'
+        when 'i' then 'INDEX'
+        when 'S' then 'SEQUENCE'
+        when 'v' then 'VIEW'
+        when 'c' then 'TYPE'
+		when 'f' then 'FUNCTION'
+		when 't' then 'TRIGGER'
+        else cls.relkind::text
+    end as ObjectType
+from pg_class cls
+join pg_roles rol 
+	on rol.oid = cls.relowner
+join pg_namespace nsp 
+	on nsp.oid = cls.relnamespace
+where nsp.nspname not in ('information_schema', 'pg_catalog')
+    and nsp.nspname not like 'pg_toast%'
+    and rol.rolname = 'confuser'  
+order by nsp.nspname, cls.relname
+
+select 
+    nsp.nspname as SchemaName
+    ,cls.relname as ObjectName 
+    ,rol.rolname as ObjectOwner
+from pg_class cls
+join pg_roles rol 
+	on rol.oid = cls.relowner
+join pg_namespace nsp 
+	on nsp.oid = cls.relnamespace
+where nsp.nspname not in ('information_schema', 'pg_catalog')
+    and nsp.nspname not like 'pg_toast%'
+    and rol.rolname = 'appdbuser'  
+order by nsp.nspname, cls.relname
+
+SELECT 'ALTER TABLE '|| tablename ||' OWNER TO confdb4;'
+FROM pg_tables WHERE NOT schemaname IN ('pg_catalog', 'information_schema') and tableowner not in ('confdb4')
+ORDER BY schemaname, tablename;
+  
+  Trigger/Function:
+  
+select
+    prosrc
+from pg_trigger, pg_proc
+where
+ pg_proc.oid=pg_trigger.tgfoid
+ and pg_trigger.tgname like 'tr_icm_document_trn_biu';
+
+select proname,prosrc from pg_proc where proname='icm_document_trn_last_update';
+  ==================================
+  
+
+Database retsore:
+ 
+pg_dump confdb > confdb.29Apr2021
+
+
+create user confdb4 with pd 'pd123#';
+CREATE DATABASE confdb4 WITH OWNER confdb4 ENCODING 'UTF8' LC_COLLATE 'en_AU.UTF-8' LC_CTYPE 'en_AU.UTF-8' TEMPLATE template0;
+grant connect on database confdb4 to confdb4;
+
+Finally, restore the dump file on the remote server:
+
+psql confdb4 < confdb.29Apr2021
+
+=========================================================================
+Enable archiving mode:
+
+wal_level=replica
+archive_mode=on
+archive_command='test ! -f /pgsql/archive/%f && cp %p /pgsql/archive/%f'
+
+Restart Postgres instance: pg_ctl restart -m fast
+
+Perform log switch: select pg_switch_xlog();
+
+
+Perform PITR:
+
+restore_command = 'cp /pgsql/archive/%f %p'
+
+recovery_target_time = '2021-07-09 16:05:00 AEST' 
+or 
+recovery_target = 'immediate' (specifies that recovery should end as soon as a consistent state is reached, 
+i.e., as early as possible. When restoring from an online backup, this means the point where taking the backup ended)
+
+==================================================================
+
+Postgres 9.6 to 10.17 migration:
+
+===================================Installation=========================
+
+Steps: Install Postgres 10.17
+
+
+# yum install -y https://download.postgresql.org/pub/repos/yum/11/redhat/rhel-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+
+# yum install postgresql11
+
+# yum install postgresql11-server
+
+OR
+
+Download below rpms:
+
+https://yum.postgresql.org/10/redhat/rhel-7-x86_64/repoview/postgresqldbserver10.group.html
+
+postgresql10-10.17-1PGDG.rhel7.x86_64
+postgresql10-contrib-10.17-1PGDG.rhel7.x86_64
+postgresql10-libs-10.17-1PGDG.rhel7.x86_64
+postgresql10-server-10.17-1PGDG.rhel7.x86_64
+
+
+++ Install RPM's (as root)
+
+$ rpm -ivh *.rpm
+
+++ Start Postgres 10:
+
+/usr/pgsql-10/bin/initdb -D <postgres data directory>
+
+Autorestart:
+
+cp /usr/lib/systemd/system/postgresql-10.service /etc/systemd/system/postgresql-10.service
+
+vi /etc/systemd/system/postgresql-10.service
+Environment=PGDATA=<postgres data directory>/
+
+[DEVELOPMENT][root@ ~]# cat /etc/systemd/system/postgresql-10.service |grep -i PGDATA
+# Note: changing PGDATA will typically require adjusting SELinux
+# Note: do not use a PGDATA pathname containing spaces, or you will
+Environment=PGDATA=<postgres data directory>
+ExecStartPre=/usr/pgsql-10/bin/postgresql-10-check-db-dir ${PGDATA}
+ExecStart=/usr/pgsql-10/bin/postmaster -D ${PGDATA}
+[DEVELOPMENT][root@ ~]#
+
+
+[DEVELOPMENT][root@ ~]# systemctl enable postgresql-10.service
+Created symlink from /etc/systemd/system/multi-user.target.wants/postgresql-10.service to /etc/systemd/system/postgresql-10.service.
+[DEVELOPMENT][root@ ~]# systemctl status postgresql-10.service
+● postgresql-10.service - PostgreSQL 10 database server
+   Loaded: loaded (/etc/systemd/system/postgresql-10.service; enabled; vendor preset: disabled)
+   Active: inactive (dead)
+     Docs: https://www.postgresql.org/docs/10/static/
+[DEVELOPMENT][root@ ~]#
+
+================================Migration================================================
+Upgrade Postgres 10.17
+
+Steps: Install Postgres 10.17
+
+
+# yum install -y https://download.postgresql.org/pub/repos/yum/11/redhat/rhel-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+
+# yum install postgresql11
+
+# yum install postgresql11-server
+
+OR
+
+Download below rpms:
+
+https://yum.postgresql.org/10/redhat/rhel-7-x86_64/repoview/postgresqldbserver10.group.html
+
+postgresql10-10.17-1PGDG.rhel7.x86_64
+postgresql10-contrib-10.17-1PGDG.rhel7.x86_64
+postgresql10-libs-10.17-1PGDG.rhel7.x86_64
+postgresql10-server-10.17-1PGDG.rhel7.x86_64
+
+
+++ Install RPM's (as root)
+
+$ rpm -ivh *.rpm
+
+++ Start Postgres 10:
+
+/usr/pgsql-10/bin/initdb -D <postgres data directory>
+
+Autorestart:
+
+cp /usr/lib/systemd/system/postgresql-10.service /etc/systemd/system/postgresql-10.service
+
+vi /etc/systemd/system/postgresql-10.service
+Environment=PGDATA=<postgres data directory>/
+
+[DEVELOPMENT][root@ ~]# systemctl enable postgresql-10.service
+Created symlink from /etc/systemd/system/multi-user.target.wants/postgresql-10.service to /etc/systemd/system/postgresql-10.service.
+[DEVELOPMENT][root@ ~]# systemctl status postgresql-10.service
+● postgresql-10.service - PostgreSQL 10 database server
+   Loaded: loaded (/etc/systemd/system/postgresql-10.service; enabled; vendor preset: disabled)
+   Active: inactive (dead)
+     Docs: https://www.postgresql.org/docs/10/static/
+[DEVELOPMENT][root@ ~]#
+
+++ Create user and database before restoring database:
+
+create user jir with pd '<>';
+
+CREATE DATABASE jirdb WITH OWNER jiruser;
+
+grant connect on database jirdb to jiruser;
+
+++ Stop application connection
+
+++ Backup of jir source database:
+
+pg_dump jirdb > /backup/jirdb.bkp.23Aug2021
+
+++ restore the dump file on the target server:
+
+psql jirdb < /backup/jirdb.bkp.23Aug2021
+
+
+pg_hba.conf:
+
+
+# jir appln server
+host    jirdb            jiruser             <app hst ip/32>         md5
+
+Connection from on-premise or EC2 to AWS aurora:
+
+$ psql -h <cluster endpoint> -p 5432 -U <master username created during aurora rds creation>
+
+===================================================================================
+
+firewall issue between onprem db host to aurora cluster?
+
+
+[TEST/SIT][postgres@ ~]$  psql -h <cluster endpoint> -p 5432 -U root
+psql: could not connect to server: Connection timed out
+        Is the server running on host "cluster endpoint" () and accepting
+        TCP/IP connections on port 5432?
+
+
+[TEST/SIT][root@ ~]# (echo >/dev/tcp/<cluster endpoint ip>/5432) &>/dev/null && echo "Open 5432" || echo "Close 5432"
+Close 5432
+[TEST/SIT][root@ ~]# iptables -S|grep 5432
+-A DOCKER -d <cluster endpoint ip>/32 ! -i br-4e4c3430048e -o br-4e4c3430048e -p tcp -m tcp --dport 5432 -j ACCEPT
+
+
+Entry was missing in NACL of database subnet:
+
+130	PostgreSQL (5432)	TCP (6)	5432	<on prem db or app ip>/32	 Allow
+140	PostgreSQL (5432)	TCP (6)	5432	<on prem db or app ip>/32	 Allow
+
+
+[TEST/SIT][root@ ~]# (echo >/dev/tcp/<cluster endpoint ip>/5432) &>/dev/null && echo "Open 5432" || echo "Close 5432"
+Open 5432
